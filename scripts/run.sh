@@ -30,6 +30,9 @@ echo "[OK] Variables d'environnement OK."
 REAL_APP=$(cd "$(dirname "$0")/.." && pwd)
 echo "[INFO] REAL_APP=$REAL_APP"
 
+# REDIS_PORT : on ne garde que les chiffres pour éviter un cast PHP silencieux à 0
+REDIS_PORT_CLEAN=$(echo "$REDIS_PORT" | tr -dc '0-9')
+
 # -----------------------------------------------------------------------------
 # Dossiers locaux (éphémères, recréés à chaque démarrage)
 # -----------------------------------------------------------------------------
@@ -66,8 +69,13 @@ db_query() {
 }
 db_get() { db_query "SELECT value FROM cc_nextcloud_secrets WHERE key = '$1';"; }
 db_set() {
+    local key="$1"
+    # Échapper les apostrophes pour éviter toute injection SQL
+    # (les secrets Nextcloud peuvent contenir des caractères spéciaux)
+    local val
+    val=$(echo "$2" | sed "s/'/''/g")
     db_query "INSERT INTO cc_nextcloud_secrets (key, value)
-              VALUES ('$1', '$2')
+              VALUES ('${key}', '${val}')
               ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;"
 }
 
@@ -166,7 +174,7 @@ write_config_php() {
   'memcache.locking'     => '\\OC\\Memcache\\Redis',
   'redis' => [
     'host'     => '${REDIS_HOST}',
-    'port'     => (int) '${REDIS_PORT}',
+    'port'     => ${REDIS_PORT_CLEAN},
     'password' => '${REDIS_PASSWORD}',
   ],
 
@@ -235,6 +243,14 @@ if [ -n "$NC_INSTANCE_ID" ] && [ -n "$NC_PASSWORD_SALT" ] && [ -n "$NC_SECRET" ]
     echo "[INFO] Vérification des migrations éventuelles..."
     php "$REAL_APP/occ" upgrade --no-interaction 2>/dev/null || true
     php "$REAL_APP/occ" db:add-missing-indices --no-interaction 2>/dev/null || true
+
+    # Mise à jour de NC_VERSION en BDD si occ upgrade a appliqué une migration
+    NC_VERSION_NEW=$(php "$REAL_APP/occ" status --output=json 2>/dev/null \
+        | grep -oE '"versionstring":"[^"]*"' | cut -d'"' -f4 || true)
+    if [ -n "$NC_VERSION_NEW" ] && [ "$NC_VERSION_NEW" != "$NC_VERSION_CURRENT" ]; then
+        echo "[INFO] Version mise à jour : $NC_VERSION_CURRENT → $NC_VERSION_NEW"
+        db_set "NC_VERSION" "$NC_VERSION_NEW"
+    fi
 
 else
     # -------------------------------------------------------------------------

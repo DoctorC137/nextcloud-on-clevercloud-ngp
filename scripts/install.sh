@@ -26,6 +26,7 @@ apply_version() {
     rm -rf nextcloud/config
     shopt -s dotglob
     cp -rf nextcloud/* .
+    shopt -u dotglob
     rm -rf nextcloud nextcloud-dl.zip
     echo "[OK] Nextcloud $version extrait."
 }

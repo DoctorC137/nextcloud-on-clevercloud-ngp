@@ -305,7 +305,9 @@ fi
 # DÉPLOIEMENT
 # =============================================================================
 section "Déploiement"
-git update-index --chmod=+x scripts/run.sh scripts/install.sh 2>/dev/null || true
+git update-index --chmod=+x \
+    scripts/run.sh scripts/install.sh scripts/skeleton.sh \
+    scripts/cron.sh scripts/sync-apps.sh 2>/dev/null || true
 info "Envoi du code source..."
 clever deploy --alias "$ALIAS" --force
 

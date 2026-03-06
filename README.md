@@ -32,7 +32,7 @@ Nextcloud writes its config to `config/config.php` and data to `data/`. Both are
 
 ### Secrets persistence
 
-`maintenance:install` generates three secrets — `instanceid`, `passwordsalt`, `secret` — that must remain stable across restarts (sessions, shares, and encryption depend on them). After first install, `run.sh` extracts them from the generated `config.php` and stores them as Clever Cloud env vars via `CC_ENVIRON_UPDATE_URL`. On subsequent starts they are injected automatically and used to rebuild `config.php`.
+`maintenance:install` generates three secrets — `instanceid`, `passwordsalt`, `secret` — that must remain stable across restarts (sessions, shares, and encryption depend on them). After first install, `run.sh` extracts them from the generated `config.php` and stores them in the PostgreSQL table `cc_nextcloud_secrets`. On subsequent starts they are read from the database and used to rebuild `config.php` from scratch.
 
 ### S3 objectstore
 
