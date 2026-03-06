@@ -172,8 +172,10 @@ write_config_php() {
   'allow_local_remote_servers' => true,
 
   // Logs vers syslog (visible via clever logs)
+  // TEMPORAIRE : loglevel=0 (debug) pour diagnostiquer les 503 WebDAV
+  // Repasser à 2 une fois le problème résolu.
   'log_type' => 'syslog',
-  'loglevel'  => 2,
+  'loglevel'  => 0,
 
   // Divers
   'default_phone_region'    => 'FR',
@@ -181,6 +183,31 @@ write_config_php() {
 ];
 EOF
     echo "[OK] config.php généré."
+}
+
+# -----------------------------------------------------------------------------
+# Création du bucket S3 si inexistant (idempotent).
+# rclone mkdir émet un PUT /<bucket> — opération no-op si le bucket existe déjà.
+# Fait avant le démarrage d'Apache pour que l'objectstore soit prêt dès la
+# première requête Nextcloud et éviter les 503 liés à l'init S3.
+# -----------------------------------------------------------------------------
+ensure_s3_bucket() {
+    local RCLONE="$REAL_APP/bin/rclone"
+    if [ ! -f "$RCLONE" ]; then
+        echo "[WARN] rclone absent — bucket S3 non pré-créé."
+        return
+    fi
+    echo "[INFO] Pré-création du bucket S3 $CELLAR_BUCKET_NAME (idempotent)..."
+    "$RCLONE" mkdir \
+        --config /dev/null \
+        --s3-provider Other \
+        --s3-access-key-id "$CELLAR_ADDON_KEY_ID" \
+        --s3-secret-access-key "$CELLAR_ADDON_KEY_SECRET" \
+        --s3-endpoint "https://$CELLAR_ADDON_HOST" \
+        --s3-force-path-style \
+        ":s3:${CELLAR_BUCKET_NAME}" 2>&1 \
+        && echo "[OK] Bucket S3 $CELLAR_BUCKET_NAME prêt." \
+        || echo "[WARN] rclone mkdir échoué — Nextcloud tentera autocreate au démarrage."
 }
 
 # -----------------------------------------------------------------------------
@@ -202,6 +229,7 @@ if [ -n "$NC_INSTANCE_ID" ] && [ -n "$NC_PASSWORD_SALT" ] && [ -n "$NC_SECRET" ]
     [ -z "$NC_VERSION_CURRENT" ] && NC_VERSION_CURRENT="0.0.0"
 
     write_config_php "$NC_INSTANCE_ID" "$NC_PASSWORD_SALT" "$NC_SECRET" "$NC_VERSION_CURRENT"
+    ensure_s3_bucket
 
     echo "[INFO] Vérification des migrations éventuelles..."
     php "$REAL_APP/occ" upgrade --no-interaction 2>/dev/null || true
@@ -233,7 +261,7 @@ else
     NC_INSTANCE_ID=$(extract_secret "instanceid")
     NC_PASSWORD_SALT=$(extract_secret "passwordsalt")
     NC_SECRET=$(extract_secret "secret")
-    NC_VERSION_INSTALLED=$(extract_secret "version" | cut -d. -f1-3)
+    NC_VERSION_INSTALLED=$(extract_secret "version")
 
     # Validation stricte : si un secret est vide, on s'arrête avec un message clair
     if [ -z "$NC_INSTANCE_ID" ] || [ -z "$NC_PASSWORD_SALT" ] || [ -z "$NC_SECRET" ]; then
@@ -251,6 +279,7 @@ else
 
     # Réécriture du config.php complet (remplace le minimal généré par occ)
     write_config_php "$NC_INSTANCE_ID" "$NC_PASSWORD_SALT" "$NC_SECRET" "$NC_VERSION_INSTALLED"
+    ensure_s3_bucket
 
     echo "[INFO] Post-installation : indices, réparation..."
     php "$REAL_APP/occ" db:add-missing-indices --no-interaction 2>/dev/null || true
