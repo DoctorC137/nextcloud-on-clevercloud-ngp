@@ -2,11 +2,15 @@
 # =============================================================================
 # cron.sh — Cron Nextcloud pour Clever Cloud
 # Appelé via clevercloud/cron.json toutes les 5 minutes.
-# Le -l dans le shebang est obligatoire pour accéder aux variables d'env.
-# $ROOT est remplacé par Clever Cloud par le chemin réel de l'application.
+# Le -l dans le shebang est obligatoire pour accéder aux variables d'env CC.
+# Sans FS Bucket : logs vers syslog (visible dans clever logs --alias nextcloud)
 # =============================================================================
 
 REAL_APP=$(ls -d /home/bas/app_*/ 2>/dev/null | head -1 | sed 's|/$||')
 [ -z "$REAL_APP" ] && exit 1
 
-php "$REAL_APP/cron.php" >> "$REAL_APP/app/storage/logs/cron.log" 2>&1
+# .ncdata est requis par occ/cron.php — recréé si absent (data/ est éphémère)
+[ ! -f "$REAL_APP/data/.ncdata" ] && \
+    echo "# Nextcloud data directory" > "$REAL_APP/data/.ncdata"
+
+php "$REAL_APP/cron.php" 2>&1 | logger -t nextcloud-cron

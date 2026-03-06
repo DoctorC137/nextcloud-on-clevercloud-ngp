@@ -53,7 +53,6 @@ echo -e "${RED}  Seront supprimés DÉFINITIVEMENT :${NC}"
 echo -e "${RED}    • Application  : $APP${NC}"
 echo -e "${RED}    • PostgreSQL   : ${APP}-pg  (toutes les données)${NC}"
 echo -e "${RED}    • Redis        : ${APP}-redis${NC}"
-echo -e "${RED}    • FS Bucket    : ${APP}-fsbucket  (config + logs)${NC}"
 echo -e "${RED}    • Cellar S3    : ${APP}-cellar  (TOUS les fichiers uploadés)${NC}"
 echo -e "${RED}    • Local        : remote clever + .clever.json${NC}"
 echo ""
@@ -101,7 +100,6 @@ else
 fi
 
 clever addon delete "${APP}-cellar"   --yes 2>/dev/null && success "${APP}-cellar supprimé."   || warn "${APP}-cellar introuvable."
-clever addon delete "${APP}-fsbucket" --yes 2>/dev/null && success "${APP}-fsbucket supprimé." || warn "${APP}-fsbucket introuvable."
 clever addon delete "${APP}-redis"    --yes 2>/dev/null && success "${APP}-redis supprimé."    || warn "${APP}-redis introuvable."
 clever addon delete "${APP}-pg"       --yes 2>/dev/null && success "${APP}-pg supprimé."       || warn "${APP}-pg introuvable."
 clever delete --app "$APP"            --yes 2>/dev/null && success "$APP supprimé."            || warn "$APP introuvable."
