@@ -9,4 +9,8 @@
 REAL_APP=$(ls -d /home/bas/app_*/ 2>/dev/null | head -1 | sed 's|/$||')
 [ -z "$REAL_APP" ] && exit 1
 
+# .ncdata est requis par occ/cron.php — recréé si absent (data/ est éphémère)
+[ ! -f "$REAL_APP/data/.ncdata" ] && \
+    echo "# Nextcloud data directory" > "$REAL_APP/data/.ncdata"
+
 php "$REAL_APP/cron.php" 2>&1 | logger -t nextcloud-cron
