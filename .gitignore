@@ -1,0 +1,19 @@
+# Clever Cloud — configuration locale
+.clever.json
+
+# Clés SSH — ne jamais commiter
+nextcc
+nextcc.pub
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs locaux
+*.log
