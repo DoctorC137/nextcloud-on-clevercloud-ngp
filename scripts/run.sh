@@ -1,14 +1,15 @@
 #!/bin/bash
 # =============================================================================
-# run.sh — CC_PRE_RUN_HOOK — POC no-fsbucket
+# run.sh — CC_PRE_RUN_HOOK — no-fsbucket
 # Sans FS Bucket : config.php reconstruit depuis env vars à chaque démarrage.
-# Les secrets générés au premier install (instanceid, passwordsalt, secret)
-# sont stockés comme variables d'environnement Clever Cloud via l'API.
+# Secrets (instanceid, passwordsalt, secret) et version installée persistés
+# comme variables d'environnement Clever Cloud via l'API.
+# custom_apps/ synchronisé depuis/vers Cellar S3 via rclone.
 # =============================================================================
 
 set -e
 
-echo "==> Démarrage Nextcloud (POC no-fsbucket)..."
+echo "==> Démarrage Nextcloud (no-fsbucket)..."
 
 # -----------------------------------------------------------------------------
 # Variables obligatoires
@@ -33,7 +34,6 @@ echo "[INFO] REAL_APP=$REAL_APP"
 
 # -----------------------------------------------------------------------------
 # Dossiers locaux (éphémères — recréés à chaque démarrage)
-# data/ est vide mais requis par Nextcloud (les fichiers sont sur S3)
 # -----------------------------------------------------------------------------
 mkdir -p \
     "$REAL_APP/config" \
@@ -42,7 +42,7 @@ mkdir -p \
     "$REAL_APP/themes"
 
 # -----------------------------------------------------------------------------
-# Copie des fichiers de config fragmentée dans config/
+# Copie des fichiers de config fragmentée
 # -----------------------------------------------------------------------------
 cp "$REAL_APP/config-git/"*.config.php "$REAL_APP/config/" 2>/dev/null || true
 
@@ -75,7 +75,7 @@ cc_env_set() {
 }
 
 # -----------------------------------------------------------------------------
-# Helper : extraire une clé de config.php (qui définit $CONFIG, pas $c)
+# Helper : extraire une clé depuis config.php
 # -----------------------------------------------------------------------------
 extract_nc_config() {
     local KEY="$1"
@@ -87,6 +87,13 @@ extract_nc_config() {
 }
 
 # -----------------------------------------------------------------------------
+# Sync custom_apps/ depuis S3 (pull systématique au boot)
+# Les apps installées via l'interface sont ainsi restaurées à chaque démarrage
+# -----------------------------------------------------------------------------
+echo "[INFO] Synchronisation custom_apps/ depuis S3..."
+bash "$REAL_APP/scripts/sync-apps.sh" pull || true
+
+# -----------------------------------------------------------------------------
 # Détection : premier démarrage ou redémarrage
 # -----------------------------------------------------------------------------
 if [ -n "$NC_INSTANCE_ID" ] && [ -n "$NC_PASSWORD_SALT" ] && [ -n "$NC_SECRET" ]; then
@@ -95,23 +102,24 @@ if [ -n "$NC_INSTANCE_ID" ] && [ -n "$NC_PASSWORD_SALT" ] && [ -n "$NC_SECRET" ]
     # -------------------------------------------------------------------------
     echo "[INFO] Secrets détectés — redémarrage, reconstruction de config.php."
 
-    NC_VERSION=$(php "$REAL_APP/occ" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    NC_VERSION_CURRENT=$(php "$REAL_APP/occ" --version 2>/dev/null \
+        | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 
     cat > "$REAL_APP/config/config.php" << EOF
 <?php
 \$CONFIG = [
-  'instanceid'     => '${NC_INSTANCE_ID}',
-  'passwordsalt'   => '${NC_PASSWORD_SALT}',
-  'secret'         => '${NC_SECRET}',
-  'installed'      => true,
-  'version'        => '${NC_VERSION}',
-  'dbtype'         => 'pgsql',
-  'dbname'         => '${POSTGRESQL_ADDON_DB}',
-  'dbhost'         => '${POSTGRESQL_ADDON_HOST}:${POSTGRESQL_ADDON_PORT}',
-  'dbuser'         => '${POSTGRESQL_ADDON_USER}',
-  'dbpassword'     => '${POSTGRESQL_ADDON_PASSWORD}',
-  'dbtableprefix'  => 'oc_',
-  'datadirectory'  => '${REAL_APP}/data',
+  'instanceid'                 => '${NC_INSTANCE_ID}',
+  'passwordsalt'               => '${NC_PASSWORD_SALT}',
+  'secret'                     => '${NC_SECRET}',
+  'installed'                  => true,
+  'version'                    => '${NC_VERSION_CURRENT}',
+  'dbtype'                     => 'pgsql',
+  'dbname'                     => '${POSTGRESQL_ADDON_DB}',
+  'dbhost'                     => '${POSTGRESQL_ADDON_HOST}:${POSTGRESQL_ADDON_PORT}',
+  'dbuser'                     => '${POSTGRESQL_ADDON_USER}',
+  'dbpassword'                 => '${POSTGRESQL_ADDON_PASSWORD}',
+  'dbtableprefix'              => 'oc_',
+  'datadirectory'              => '${REAL_APP}/data',
   'allow_local_remote_servers' => true,
 ];
 EOF
@@ -155,28 +163,24 @@ else
         --no-interaction
 
     # -------------------------------------------------------------------------
-    # Extraction des secrets générés par Nextcloud depuis config.php
-    # config.php définit $CONFIG (pas $c) — utiliser extract_nc_config()
+    # Extraction et persistence des secrets
     # -------------------------------------------------------------------------
     NC_INSTANCE_ID=$(extract_nc_config "instanceid")
     NC_PASSWORD_SALT=$(extract_nc_config "passwordsalt")
     NC_SECRET=$(extract_nc_config "secret")
-
-    echo "[DEBUG] instanceid='$NC_INSTANCE_ID'"
-    echo "[DEBUG] passwordsalt length=${#NC_PASSWORD_SALT}"
-    echo "[DEBUG] secret length=${#NC_SECRET}"
+    NC_VERSION_INSTALLED=$(extract_nc_config "version" | cut -d. -f1-3)
 
     if [ -z "$NC_INSTANCE_ID" ] || [ -z "$NC_PASSWORD_SALT" ] || [ -z "$NC_SECRET" ]; then
         echo "[ERR] Impossible d'extraire les secrets depuis config.php."
-        echo "[ERR] Contenu config.php :"
-        cat "$REAL_APP/config/config.php" || echo "[ERR] config.php introuvable"
+        cat "$REAL_APP/config/config.php" || true
         exit 1
     fi
 
-    echo "[INFO] Secrets extraits — persistance via API Clever Cloud..."
-    cc_env_set "NC_INSTANCE_ID"   "$NC_INSTANCE_ID"
-    cc_env_set "NC_PASSWORD_SALT" "$NC_PASSWORD_SALT"
-    cc_env_set "NC_SECRET"        "$NC_SECRET"
+    echo "[INFO] Persistance des secrets et version via API Clever Cloud..."
+    cc_env_set "NC_INSTANCE_ID"        "$NC_INSTANCE_ID"
+    cc_env_set "NC_PASSWORD_SALT"      "$NC_PASSWORD_SALT"
+    cc_env_set "NC_SECRET"             "$NC_SECRET"
+    cc_env_set "NC_VERSION"            "$NC_VERSION_INSTALLED"
 
     # -------------------------------------------------------------------------
     # Config réseau, Redis, trusted proxies
@@ -208,6 +212,11 @@ fi
 php "$REAL_APP/occ" config:system:set maintenance_window_start --value=1 --type=integer --no-interaction 2>/dev/null || true
 php "$REAL_APP/occ" config:system:set default_phone_region --value="FR" --no-interaction 2>/dev/null || true
 php "$REAL_APP/occ" config:app:set core backgroundjobs_mode --value webcron --no-interaction 2>/dev/null || true
+
+# Logs vers stdout/syslog — pas de fichier local
+php "$REAL_APP/occ" config:system:set log_type --value="syslog" --no-interaction 2>/dev/null || true
+php "$REAL_APP/occ" config:system:set loglevel --value=2 --type=integer --no-interaction 2>/dev/null || true
+
 php "$REAL_APP/occ" maintenance:mode --off --no-interaction 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
