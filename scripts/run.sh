@@ -33,16 +33,6 @@ echo "[INFO] REAL_APP=$REAL_APP"
 # REDIS_PORT : on ne garde que les chiffres pour éviter un cast PHP silencieux à 0
 REDIS_PORT_CLEAN=$(echo "$REDIS_PORT" | tr -dc '0-9')
 
-# Build trusted_proxies PHP array from CC_REVERSE_PROXY_IPS (auto-injected by
-# Clever Cloud at deploy time as a comma-separated list of reverse-proxy IPs).
-# Falls back to RFC-1918 private ranges when running outside Clever Cloud.
-if [ -n "$CC_REVERSE_PROXY_IPS" ]; then
-    _clean=$(echo "$CC_REVERSE_PROXY_IPS" | tr -d ' ')
-    TRUSTED_PROXIES_PHP="'$(echo "$_clean" | sed "s/,/', '/g")'"
-else
-    TRUSTED_PROXIES_PHP="'10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'"
-fi
-
 # -----------------------------------------------------------------------------
 # Dossiers locaux (éphémères, recréés à chaque démarrage)
 # -----------------------------------------------------------------------------
@@ -175,7 +165,7 @@ write_config_php() {
   'overwrite.cli.url'      => 'https://${NEXTCLOUD_DOMAIN}',
   'overwritehost'          => '${NEXTCLOUD_DOMAIN}',
   'trusted_domains'        => ['${NEXTCLOUD_DOMAIN}'],
-  'trusted_proxies'        => [${TRUSTED_PROXIES_PHP}],
+  'trusted_proxies'        => ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'],
   'forwarded_for_headers'  => ['HTTP_X_FORWARDED_FOR'],
 
   // Cache Redis
@@ -229,13 +219,6 @@ ensure_s3_bucket() {
         || echo "[WARN] rclone mkdir échoué — Nextcloud tentera autocreate au démarrage."
 }
 
-# Always read the version from Nextcloud's own version.php so config.php always
-# reflects the installed code version — avoids a needsDbUpgrade=true loop caused
-# by a stale version stored in DB being written back into config.php each boot.
-NC_VERSION_CODE=$(php -r "include '${REAL_APP}/version.php'; echo implode('.', \$OC_Version);" 2>/dev/null || true)
-[ -z "$NC_VERSION_CODE" ] && NC_VERSION_CODE="0.0.0.0"
-echo "[INFO] Code version: $NC_VERSION_CODE"
-
 # -----------------------------------------------------------------------------
 # PREMIER DÉMARRAGE vs REDÉMARRAGE
 # -----------------------------------------------------------------------------
@@ -254,7 +237,7 @@ if [ -n "$NC_INSTANCE_ID" ] && [ -n "$NC_PASSWORD_SALT" ] && [ -n "$NC_SECRET" ]
     fi
     [ -z "$NC_VERSION_CURRENT" ] && NC_VERSION_CURRENT="0.0.0"
 
-    write_config_php "$NC_INSTANCE_ID" "$NC_PASSWORD_SALT" "$NC_SECRET" "$NC_VERSION_CODE"
+    write_config_php "$NC_INSTANCE_ID" "$NC_PASSWORD_SALT" "$NC_SECRET" "$NC_VERSION_CURRENT"
     ensure_s3_bucket
 
     echo "[INFO] Vérification des migrations éventuelles..."
@@ -263,7 +246,7 @@ if [ -n "$NC_INSTANCE_ID" ] && [ -n "$NC_PASSWORD_SALT" ] && [ -n "$NC_SECRET" ]
 
     # Mise à jour de NC_VERSION en BDD si occ upgrade a appliqué une migration
     NC_VERSION_NEW=$(php "$REAL_APP/occ" status --output=json 2>/dev/null \
-        | grep -oE '"version":"[^"]*"' | cut -d'"' -f4 || true)
+        | grep -oE '"versionstring":"[^"]*"' | cut -d'"' -f4 || true)
     if [ -n "$NC_VERSION_NEW" ] && [ "$NC_VERSION_NEW" != "$NC_VERSION_CURRENT" ]; then
         echo "[INFO] Version mise à jour : $NC_VERSION_CURRENT → $NC_VERSION_NEW"
         db_set "NC_VERSION" "$NC_VERSION_NEW"
@@ -299,7 +282,7 @@ else
     # car config.php généré par occ maintenance:install ne contient que 3 chiffres (ex: 33.0.0)
     # ce qui provoquerait un occ upgrade inutile à chaque redémarrage
     NC_VERSION_INSTALLED=$(php "$REAL_APP/occ" status --output=json 2>/dev/null \
-        | grep -oE '"version":"[^"]*"' | cut -d'"' -f4 || true)
+        | grep -oE '"versionstring":"[^"]*"' | cut -d'"' -f4 || true)
     [ -z "$NC_VERSION_INSTALLED" ] && NC_VERSION_INSTALLED=$(extract_secret "version")
 
     # Validation stricte : si un secret est vide, on s'arrête avec un message clair
@@ -317,7 +300,7 @@ else
     db_set "NC_VERSION"       "$NC_VERSION_INSTALLED"
 
     # Réécriture du config.php complet (remplace le minimal généré par occ)
-    write_config_php "$NC_INSTANCE_ID" "$NC_PASSWORD_SALT" "$NC_SECRET" "$NC_VERSION_CODE"
+    write_config_php "$NC_INSTANCE_ID" "$NC_PASSWORD_SALT" "$NC_SECRET" "$NC_VERSION_INSTALLED"
     ensure_s3_bucket
 
     echo "[INFO] Post-installation : upgrade, indices, réparation..."
@@ -327,7 +310,7 @@ else
 
     # Update stored version after upgrade
     NC_VERSION_FINAL=$(php "$REAL_APP/occ" status --output=json 2>/dev/null \
-        | grep -oE '"version":"[^"]*"' | cut -d'"' -f4 || true)
+        | grep -oE '"versionstring":"[^"]*"' | cut -d'"' -f4 || true)
     [ -n "$NC_VERSION_FINAL" ] && db_set "NC_VERSION" "$NC_VERSION_FINAL"
 
     echo "[OK] Installation Nextcloud terminée."
